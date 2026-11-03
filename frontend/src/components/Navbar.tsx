@@ -117,8 +117,8 @@ export const Navbar: React.FC = () => {
                     key={dr.username}
                     onClick={() => handleRoleSwitch(dr.username)}
                     className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center justify-between transition ${user?.username === dr.username
-                        ? 'bg-brand-600 text-white font-medium shadow-md shadow-brand-500/20'
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60'
+                      ? 'bg-brand-600 text-white font-medium shadow-md shadow-brand-500/20'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60'
                       }`}
                   >
                     <div>

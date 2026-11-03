@@ -81,6 +81,16 @@ export class TransferController {
   static async createTransfer(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const data = createTransferSchema.parse(req.body);
+
+      // Validate source and destination warehouses are different
+      if (data.sourceWarehouseId === data.destWarehouseId) {
+        res.status(400).json({
+          success: false,
+          message: 'Source warehouse and destination warehouse cannot be the same facility.',
+        });
+        return;
+      }
+
       const transferNumber = `TRF-${Date.now().toString().slice(-6)}`;
 
       // Validate source stock availability
@@ -181,20 +191,59 @@ export class TransferController {
         for (const item of transfer.items) {
           const sourceBinId = item.sourceBinId;
           const batchNumber = item.batchNumber || '';
+          let targetBinId = sourceBinId;
 
-          // Deduct from source balance
-          await tx.stockBalance.updateMany({
-            where: {
-              productId: item.productId,
-              warehouseId: transfer.sourceWarehouseId,
-              ...(sourceBinId ? { binId: sourceBinId } : {}),
-              batchNumber,
-            },
-            data: {
-              onHandQty: { decrement: item.requestedQty },
-              lastMovementAt: new Date(),
-            },
-          });
+          // Deduct from specific source balance record
+          if (sourceBinId) {
+            await tx.stockBalance.updateMany({
+              where: {
+                productId: item.productId,
+                warehouseId: transfer.sourceWarehouseId,
+                binId: sourceBinId,
+                batchNumber,
+              },
+              data: {
+                onHandQty: { decrement: item.requestedQty },
+                lastMovementAt: new Date(),
+              },
+            });
+          } else {
+            // Find specific balance record in source warehouse with sufficient stock
+            const sourceBal = await tx.stockBalance.findFirst({
+              where: {
+                productId: item.productId,
+                warehouseId: transfer.sourceWarehouseId,
+                batchNumber,
+                onHandQty: { gte: item.requestedQty },
+              },
+            });
+
+            if (sourceBal) {
+              targetBinId = sourceBal.binId;
+              await tx.stockBalance.update({
+                where: { id: sourceBal.id },
+                data: {
+                  onHandQty: { decrement: item.requestedQty },
+                  lastMovementAt: new Date(),
+                },
+              });
+            } else {
+              // Fallback to first matching balance in warehouse
+              const anyBal = await tx.stockBalance.findFirst({
+                where: { productId: item.productId, warehouseId: transfer.sourceWarehouseId },
+              });
+              if (anyBal) {
+                targetBinId = anyBal.binId;
+                await tx.stockBalance.update({
+                  where: { id: anyBal.id },
+                  data: {
+                    onHandQty: { decrement: item.requestedQty },
+                    lastMovementAt: new Date(),
+                  },
+                });
+              }
+            }
+          }
 
           // Post to ledger: TRANSFER_OUT
           await tx.stockMovement.create({
@@ -202,7 +251,7 @@ export class TransferController {
               transactionNumber: `TXN-TRF-OUT-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`,
               productId: item.productId,
               sourceWarehouseId: transfer.sourceWarehouseId,
-              sourceBinId: sourceBinId || null,
+              sourceBinId: targetBinId || null,
               destWarehouseId: transfer.destWarehouseId,
               quantity: item.requestedQty,
               uomId: item.product.uomId,
@@ -221,6 +270,7 @@ export class TransferController {
             data: {
               dispatchedQty: item.requestedQty,
               status: 'DISPATCHED',
+              ...(targetBinId && !item.sourceBinId ? { sourceBinId: targetBinId } : {}),
             },
           });
         }

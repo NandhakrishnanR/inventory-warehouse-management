@@ -211,12 +211,12 @@ export const Dashboard: React.FC = () => {
                   <div className="flex items-center space-x-3">
                     <span
                       className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${m.transactionType === 'RECEIPT'
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
-                          : m.transactionType.includes('TRANSFER')
-                            ? 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-400 border border-sky-200 dark:border-sky-800'
-                            : m.transactionType === 'ISSUE'
-                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-400 border border-rose-200 dark:border-rose-800'
-                              : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 border border-amber-200 dark:border-amber-800'
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+                        : m.transactionType.includes('TRANSFER')
+                          ? 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-400 border border-sky-200 dark:border-sky-800'
+                          : m.transactionType === 'ISSUE'
+                            ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-400 border border-rose-200 dark:border-rose-800'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 border border-amber-200 dark:border-amber-800'
                         }`}
                     >
                       {m.transactionType}
