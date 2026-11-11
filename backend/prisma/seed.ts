@@ -165,7 +165,7 @@ async function main() {
     { code: 'inventory:create', name: 'Direct Stock Inward', module: 'INVENTORY', action: 'CREATE', description: 'Perform controlled manual or direct inventory receipts' },
     { code: 'inventory:issue', name: 'Issue Material', module: 'INVENTORY', action: 'ISSUE', description: 'Issue stock for departmental consumption' },
     { code: 'inventory:adjust', name: 'Adjust Stock Balances', module: 'INVENTORY', action: 'ADJUST', description: 'Reconcile stock balances and post adjustments' },
-    
+
     { code: 'transfer:view', name: 'View Transfers', module: 'TRANSFER', action: 'VIEW', description: 'View stock transfer requests and tracking' },
     { code: 'transfer:create', name: 'Initiate Transfer', module: 'TRANSFER', action: 'CREATE', description: 'Create inter-warehouse or bin-to-bin transfer requests' },
     { code: 'transfer:approve', name: 'Approve Transfer', module: 'TRANSFER', action: 'APPROVE', description: 'Approve transfer requests' },
@@ -432,6 +432,7 @@ async function main() {
       maxVolume: 2.5,
     },
   });
+
 
   const binB01_001 = await prisma.warehouseBin.create({
     data: {
