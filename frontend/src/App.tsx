@@ -148,6 +148,7 @@ export const App: React.FC = () => {
           </ProtectedLayout>
         }
       />
+      <Route path="/audit-logs" element={<Navigate to="/audit" replace />} />
       <Route
         path="/users"
         element={

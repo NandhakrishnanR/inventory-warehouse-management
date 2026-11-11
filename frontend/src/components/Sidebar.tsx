@@ -17,10 +17,17 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
+interface NavItem {
+  label: string;
+  path: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
+}
+
 export const Sidebar: React.FC = () => {
   const { user } = useAuth();
 
-  const navItems = [
+  const navItems: NavItem[] = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
     { label: 'Warehouse Tree', path: '/hierarchy', icon: Network },
     { label: 'Product Master', path: '/products', icon: Package },

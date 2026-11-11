@@ -2,3 +2,7 @@ docker compose exec backend npx tsx prisma/seed.ts
 docker compose exec backend npm test
 docker compose logs -f
 docker compose up --build -d
+
+seed :
+---------
+npx tsx prisma/seed.ts

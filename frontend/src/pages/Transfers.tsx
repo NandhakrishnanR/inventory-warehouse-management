@@ -161,6 +161,8 @@ export const Transfers: React.FC = () => {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['stock-transfers'] });
       queryClient.invalidateQueries({ queryKey: ['stock-balances'] });
+      queryClient.invalidateQueries({ queryKey: ['location-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['warehouses'] });
       setShowAddModal(false);
       setErrorMessage(null);
       if (data?.data) {
@@ -181,6 +183,9 @@ export const Transfers: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['stock-transfers'] });
       queryClient.invalidateQueries({ queryKey: ['stock-balances'] });
       queryClient.invalidateQueries({ queryKey: ['stock-movements'] });
+      queryClient.invalidateQueries({ queryKey: ['location-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['warehouses'] });
+      queryClient.invalidateQueries({ queryKey: ['stock-summary'] });
       setDispatchModalTransfer(null);
       setErrorMessage(null);
     },
@@ -198,6 +203,9 @@ export const Transfers: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['stock-transfers'] });
       queryClient.invalidateQueries({ queryKey: ['stock-balances'] });
       queryClient.invalidateQueries({ queryKey: ['stock-movements'] });
+      queryClient.invalidateQueries({ queryKey: ['location-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['warehouses'] });
+      queryClient.invalidateQueries({ queryKey: ['stock-summary'] });
       setReceiveModalTransfer(null);
       setErrorMessage(null);
     },

@@ -12,6 +12,7 @@ import transferRoutes from '../modules/transfer/transfer.routes';
 import stockCountRoutes from '../modules/stock-count/stock-count.routes';
 import approvalRoutes from '../modules/approval/approval.routes';
 import reportRoutes from '../modules/reports/reports.routes';
+import { ReportsController } from '../modules/reports/reports.controller';
 
 const router = Router();
 
@@ -35,5 +36,7 @@ router.use('/transfers', transferRoutes);
 router.use('/stock-counts', stockCountRoutes);
 router.use('/approvals', approvalRoutes);
 router.use('/reports', reportRoutes);
+router.get('/audit-logs', authenticateToken, ReportsController.getAuditLogs);
+router.get('/audit', authenticateToken, ReportsController.getAuditLogs);
 
 export default router;

@@ -93,16 +93,55 @@ export class TransferController {
 
       const transferNumber = `TRF-${Date.now().toString().slice(-6)}`;
 
-      // Validate source stock availability
+      // Validate source stock availability and resolve bin/batch
+      const itemsToCreate = [];
       for (const item of data.items) {
-        const balance = await prisma.stockBalance.findFirst({
-          where: {
-            productId: item.productId,
-            warehouseId: data.sourceWarehouseId,
-            ...(item.sourceBinId ? { binId: item.sourceBinId } : {}),
-            ...(item.batchNumber ? { batchNumber: item.batchNumber } : {}),
-          },
-        });
+        let balance: any = null;
+
+        if (item.sourceBinId) {
+          balance = await prisma.stockBalance.findFirst({
+            where: {
+              productId: item.productId,
+              warehouseId: data.sourceWarehouseId,
+              binId: item.sourceBinId,
+              ...(item.batchNumber ? { batchNumber: item.batchNumber } : {}),
+              onHandQty: { gt: 0 },
+            },
+            orderBy: { onHandQty: 'desc' },
+          });
+
+          if (!balance) {
+            balance = await prisma.stockBalance.findFirst({
+              where: {
+                productId: item.productId,
+                warehouseId: data.sourceWarehouseId,
+                binId: item.sourceBinId,
+              },
+              orderBy: { onHandQty: 'desc' },
+            });
+          }
+        } else {
+          balance = await prisma.stockBalance.findFirst({
+            where: {
+              productId: item.productId,
+              warehouseId: data.sourceWarehouseId,
+              ...(item.batchNumber ? { batchNumber: item.batchNumber } : {}),
+              onHandQty: { gte: item.requestedQty },
+            },
+            orderBy: { onHandQty: 'desc' },
+          });
+
+          if (!balance) {
+            balance = await prisma.stockBalance.findFirst({
+              where: {
+                productId: item.productId,
+                warehouseId: data.sourceWarehouseId,
+                onHandQty: { gt: 0 },
+              },
+              orderBy: { onHandQty: 'desc' },
+            });
+          }
+        }
 
         const available = (balance?.onHandQty || 0) - (balance?.reservedQty || 0);
         if (!balance || available < item.requestedQty) {
@@ -112,6 +151,16 @@ export class TransferController {
           });
           return;
         }
+
+        itemsToCreate.push({
+          productId: item.productId,
+          sourceBinId: item.sourceBinId || balance.binId || null,
+          destBinId: item.destBinId || null,
+          requestedQty: item.requestedQty,
+          dispatchedQty: 0,
+          receivedQty: 0,
+          batchNumber: item.batchNumber || balance.batchNumber || null,
+        });
       }
 
       const transfer = await prisma.stockTransfer.create({
@@ -125,15 +174,7 @@ export class TransferController {
           reason: data.reason,
           notes: data.notes,
           items: {
-            create: data.items.map((i) => ({
-              productId: i.productId,
-              sourceBinId: i.sourceBinId || null,
-              destBinId: i.destBinId || null,
-              requestedQty: i.requestedQty,
-              dispatchedQty: 0,
-              receivedQty: 0,
-              batchNumber: i.batchNumber || null,
-            })),
+            create: itemsToCreate,
           },
         },
         include: { items: { include: { product: true } } },
@@ -189,60 +230,87 @@ export class TransferController {
 
         // Deduct source stock and post TRANSFER_OUT movement to ledger
         for (const item of transfer.items) {
-          const sourceBinId = item.sourceBinId;
-          const batchNumber = item.batchNumber || '';
-          let targetBinId = sourceBinId;
+          let sourceBinId = item.sourceBinId;
+          let batchNumber = item.batchNumber;
 
-          // Deduct from specific source balance record
+          // Find the exact balance record in source warehouse/bin to deduct from
+          let sourceBal: any = null;
+
           if (sourceBinId) {
-            await tx.stockBalance.updateMany({
+            // First try matching specific bin with batchNumber (if known) and available stock
+            if (batchNumber) {
+              sourceBal = await tx.stockBalance.findFirst({
+                where: {
+                  productId: item.productId,
+                  warehouseId: transfer.sourceWarehouseId,
+                  binId: sourceBinId,
+                  batchNumber,
+                  onHandQty: { gte: item.requestedQty },
+                },
+              });
+            }
+
+            // If not found with batchNumber, find any balance in this specific bin with sufficient stock
+            if (!sourceBal) {
+              sourceBal = await tx.stockBalance.findFirst({
+                where: {
+                  productId: item.productId,
+                  warehouseId: transfer.sourceWarehouseId,
+                  binId: sourceBinId,
+                  onHandQty: { gte: item.requestedQty },
+                },
+                orderBy: { onHandQty: 'desc' },
+              });
+            }
+
+            // Fallback: any balance in this specific bin
+            if (!sourceBal) {
+              sourceBal = await tx.stockBalance.findFirst({
+                where: {
+                  productId: item.productId,
+                  warehouseId: transfer.sourceWarehouseId,
+                  binId: sourceBinId,
+                },
+                orderBy: { onHandQty: 'desc' },
+              });
+            }
+          }
+
+          // If sourceBinId was not specified or no record in specified bin, find across source warehouse
+          if (!sourceBal) {
+            sourceBal = await tx.stockBalance.findFirst({
               where: {
                 productId: item.productId,
                 warehouseId: transfer.sourceWarehouseId,
-                binId: sourceBinId,
-                batchNumber,
+                onHandQty: { gte: item.requestedQty },
               },
+              orderBy: { onHandQty: 'desc' },
+            });
+          }
+
+          // Ultimate warehouse fallback
+          if (!sourceBal) {
+            sourceBal = await tx.stockBalance.findFirst({
+              where: {
+                productId: item.productId,
+                warehouseId: transfer.sourceWarehouseId,
+              },
+              orderBy: { onHandQty: 'desc' },
+            });
+          }
+
+          if (sourceBal) {
+            // Deduct from the exact stock balance by primary key id!
+            await tx.stockBalance.update({
+              where: { id: sourceBal.id },
               data: {
                 onHandQty: { decrement: item.requestedQty },
                 lastMovementAt: new Date(),
               },
             });
-          } else {
-            // Find specific balance record in source warehouse with sufficient stock
-            const sourceBal = await tx.stockBalance.findFirst({
-              where: {
-                productId: item.productId,
-                warehouseId: transfer.sourceWarehouseId,
-                batchNumber,
-                onHandQty: { gte: item.requestedQty },
-              },
-            });
 
-            if (sourceBal) {
-              targetBinId = sourceBal.binId;
-              await tx.stockBalance.update({
-                where: { id: sourceBal.id },
-                data: {
-                  onHandQty: { decrement: item.requestedQty },
-                  lastMovementAt: new Date(),
-                },
-              });
-            } else {
-              // Fallback to first matching balance in warehouse
-              const anyBal = await tx.stockBalance.findFirst({
-                where: { productId: item.productId, warehouseId: transfer.sourceWarehouseId },
-              });
-              if (anyBal) {
-                targetBinId = anyBal.binId;
-                await tx.stockBalance.update({
-                  where: { id: anyBal.id },
-                  data: {
-                    onHandQty: { decrement: item.requestedQty },
-                    lastMovementAt: new Date(),
-                  },
-                });
-              }
-            }
+            sourceBinId = sourceBal.binId;
+            batchNumber = item.batchNumber || sourceBal.batchNumber;
           }
 
           // Post to ledger: TRANSFER_OUT
@@ -251,14 +319,14 @@ export class TransferController {
               transactionNumber: `TXN-TRF-OUT-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`,
               productId: item.productId,
               sourceWarehouseId: transfer.sourceWarehouseId,
-              sourceBinId: targetBinId || null,
+              sourceBinId: sourceBinId || null,
               destWarehouseId: transfer.destWarehouseId,
               quantity: item.requestedQty,
               uomId: item.product.uomId,
               transactionType: 'TRANSFER_OUT',
               referenceType: 'STOCK_TRANSFER',
               referenceId: transfer.transferNumber,
-              batchNumber: item.batchNumber,
+              batchNumber: batchNumber || null,
               performedById: req.user!.id,
               notes: `Dispatched in transfer ${transfer.transferNumber}`,
             },
@@ -270,7 +338,8 @@ export class TransferController {
             data: {
               dispatchedQty: item.requestedQty,
               status: 'DISPATCHED',
-              ...(targetBinId && !item.sourceBinId ? { sourceBinId: targetBinId } : {}),
+              sourceBinId: sourceBinId || null,
+              batchNumber: batchNumber || null,
             },
           });
         }
@@ -366,32 +435,44 @@ export class TransferController {
             });
 
             // Upsert destination stock balance
-            await tx.stockBalance.upsert({
+            const targetBatch = item.batchNumber || '';
+            const existingDestBal = await tx.stockBalance.findFirst({
               where: {
-                productId_warehouseId_binId_batchNumber: {
-                  productId: item.productId,
-                  warehouseId: transfer.destWarehouseId,
-                  binId: itemRecv.destBinId,
-                  batchNumber: item.batchNumber || '',
-                },
-              },
-              update: {
-                onHandQty: { increment: itemRecv.receivedQty },
-                lastMovementAt: new Date(),
-              },
-              create: {
                 productId: item.productId,
                 warehouseId: transfer.destWarehouseId,
                 binId: itemRecv.destBinId,
-                batchNumber: item.batchNumber || '',
-                onHandQty: itemRecv.receivedQty,
-                reservedQty: 0,
-                damagedQty: 0,
-                quarantinedQty: 0,
-                inTransitQty: 0,
-                lastMovementAt: new Date(),
+                OR: [
+                  { batchNumber: targetBatch },
+                  { batchNumber: item.batchNumber || null },
+                  ...(targetBatch === '' ? [{ batchNumber: null }] : []),
+                ],
               },
             });
+
+            if (existingDestBal) {
+              await tx.stockBalance.update({
+                where: { id: existingDestBal.id },
+                data: {
+                  onHandQty: { increment: itemRecv.receivedQty },
+                  lastMovementAt: new Date(),
+                },
+              });
+            } else {
+              await tx.stockBalance.create({
+                data: {
+                  productId: item.productId,
+                  warehouseId: transfer.destWarehouseId,
+                  binId: itemRecv.destBinId,
+                  batchNumber: targetBatch,
+                  onHandQty: itemRecv.receivedQty,
+                  reservedQty: 0,
+                  damagedQty: 0,
+                  quarantinedQty: 0,
+                  inTransitQty: 0,
+                  lastMovementAt: new Date(),
+                },
+              });
+            }
           }
         }
 

@@ -1791,4 +1791,21 @@ export class WarehouseController {
       next(err);
     }
   }
+
+  // GET /api/warehouses/:id/bins
+  static async listWarehouseBins(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const bins = await prisma.warehouseBin.findMany({
+        where: { warehouseId: id, isActive: true },
+        include: {
+          rack: { include: { zone: true } },
+        },
+        orderBy: { code: 'asc' },
+      });
+      res.json({ success: true, data: bins });
+    } catch (err) {
+      next(err);
+    }
+  }
 }

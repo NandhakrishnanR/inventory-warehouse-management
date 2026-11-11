@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../shared/prisma';
 import { logAudit } from '../../shared/audit';
-import { createNotification } from '../../shared/notification';
+import { createNotification, notifyUsersByRole } from '../../shared/notification';
 
 const actionSchema = z.object({
   comments: z.string().optional(),
@@ -12,16 +12,57 @@ export class ApprovalController {
   // GET /api/approvals/inbox
   static async getInbox(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const userRoles = req.user!.roles;
+      const userRoles = req.user!.roles || [];
+      const isAdmin = userRoles.includes('ADMIN');
+      const isFinanceApprover = userRoles.includes('FINANCE_APPROVER');
+      const isAuditor = userRoles.includes('AUDITOR');
+      const userId = req.user!.id;
+      const scope = (req.query.scope as string) || 'assigned'; // 'assigned', 'submitted', 'history', 'all'
 
-      // Find pending instances where current step requires one of the user's roles
-      const instances = await prisma.approvalInstance.findMany({
-        where: {
+      let whereClause: any = {};
+
+      if (scope === 'submitted') {
+        // Requests initiated by the current user
+        whereClause = {
+          initiatedById: userId,
+        };
+      } else if (scope === 'history') {
+        // Completed/terminal requests
+        whereClause = {
+          status: { in: ['APPROVED', 'REJECTED', 'RETURNED'] },
+          ...(!isAdmin && !isFinanceApprover && !isAuditor && {
+            OR: [
+              { initiatedById: userId },
+              { actions: { some: { actorId: userId } } },
+            ],
+          }),
+        };
+      } else if (scope === 'all' && (isAdmin || isAuditor || isFinanceApprover)) {
+        // Full oversight for Admin, Auditor, or Finance Approver
+        whereClause = {};
+      } else {
+        // 'assigned': Pending approvals awaiting action
+        // Admins see all pending; Finance Approvers see items matching their role OR any pending Purchase Requisitions
+        whereClause = {
           status: 'PENDING',
-          currentStep: {
-            approverRole: { in: userRoles },
-          },
-        },
+          ...(!isAdmin && (isFinanceApprover
+            ? {
+                OR: [
+                  { currentStep: { approverRole: { in: userRoles } } },
+                  { documentType: 'PURCHASE_REQUISITION' },
+                ],
+              }
+            : {
+                currentStep: {
+                  approverRole: { in: userRoles },
+                },
+              }
+          )),
+        };
+      }
+
+      const instances = await prisma.approvalInstance.findMany({
+        where: whereClause,
         include: {
           workflow: true,
           currentStep: true,
@@ -34,7 +75,7 @@ export class ApprovalController {
         orderBy: { createdAt: 'desc' },
       });
 
-      // Enrich with document details (e.g., PR or PO)
+      // Enrich with document details (PR, PO, StockTransfer)
       const enriched = await Promise.all(
         instances.map(async (inst) => {
           let documentDetails: any = null;
@@ -47,6 +88,11 @@ export class ApprovalController {
             documentDetails = await prisma.purchaseOrder.findUnique({
               where: { id: inst.documentId },
               include: { supplier: true, items: { include: { product: true } } },
+            });
+          } else if (inst.documentType === 'STOCK_TRANSFER') {
+            documentDetails = await prisma.stockTransfer.findUnique({
+              where: { id: inst.documentId },
+              include: { sourceWarehouse: true, destWarehouse: true, items: { include: { product: true } } },
             });
           }
           return {
@@ -91,10 +137,15 @@ export class ApprovalController {
       }
 
       // Check role authorization
-      if (instance.currentStep && !req.user!.roles.includes(instance.currentStep.approverRole) && !req.user!.roles.includes('ADMIN')) {
+      const isRoleAuthorized =
+        (instance.currentStep && req.user!.roles.includes(instance.currentStep.approverRole)) ||
+        req.user!.roles.includes('ADMIN') ||
+        (instance.documentType === 'PURCHASE_REQUISITION' && req.user!.roles.includes('FINANCE_APPROVER'));
+
+      if (!isRoleAuthorized) {
         res.status(403).json({
           success: false,
-          message: `Forbidden: This step requires role ${instance.currentStep.approverRole}`,
+          message: `Forbidden: This step requires role ${instance.currentStep?.approverRole}`,
         });
         return;
       }
@@ -111,19 +162,45 @@ export class ApprovalController {
           },
         });
 
-        // Determine next step or final approval
-        const currentOrder = instance.currentStep?.stepOrder || 1;
-        const nextStep = instance.workflow.steps.find((s) => s.stepOrder > currentOrder);
+        // Check document amount if applicable
+        let documentAmount = 0;
+        if (instance.documentType === 'PURCHASE_REQUISITION') {
+          const pr = await tx.purchaseRequisition.findUnique({ where: { id: instance.documentId } });
+          documentAmount = pr?.totalEstimatedCost || 0;
+        }
 
-        if (nextStep && !instance.currentStep?.isFinal) {
+        // Determine next step or final approval based on step ordering and amount thresholds
+        const currentOrder = instance.currentStep?.stepOrder || 1;
+        const candidateSteps = instance.workflow.steps.filter((s) => s.stepOrder > currentOrder);
+        const nextStep = candidateSteps.find((s) => {
+          if (s.minAmount !== null && documentAmount < s.minAmount) return false;
+          if (s.maxAmount !== null && documentAmount > s.maxAmount) return false;
+          return true;
+        });
+
+        // If approved by FINANCE_APPROVER on a Purchase Requisition, treat as final authorization
+        const isFinanceFinal = req.user!.roles.includes('FINANCE_APPROVER') && instance.documentType === 'PURCHASE_REQUISITION';
+
+        if (nextStep && !instance.currentStep?.isFinal && !isFinanceFinal) {
           // Advance to next step
-          return await tx.approvalInstance.update({
+          const updated = await tx.approvalInstance.update({
             where: { id },
             data: {
               currentStepId: nextStep.id,
               status: 'PENDING',
             },
           });
+
+          // Notify next step approver role
+          await notifyUsersByRole(
+            nextStep.approverRole,
+            `Pending Approval: Step ${nextStep.stepOrder} (${instance.documentType})`,
+            `Document advanced to ${nextStep.stepName} for review.`,
+            '/approvals',
+            'APPROVAL'
+          );
+
+          return updated;
         } else {
           // Final approval
           const updated = await tx.approvalInstance.update({
@@ -185,10 +262,15 @@ export class ApprovalController {
       }
 
       // Check role authorization
-      if (instance.currentStep && !req.user!.roles.includes(instance.currentStep.approverRole) && !req.user!.roles.includes('ADMIN')) {
+      const isRoleAuthorized =
+        (instance.currentStep && req.user!.roles.includes(instance.currentStep.approverRole)) ||
+        req.user!.roles.includes('ADMIN') ||
+        (instance.documentType === 'PURCHASE_REQUISITION' && req.user!.roles.includes('FINANCE_APPROVER'));
+
+      if (!isRoleAuthorized) {
         res.status(403).json({
           success: false,
-          message: `Forbidden: This step requires role ${instance.currentStep.approverRole}`,
+          message: `Forbidden: This step requires role ${instance.currentStep?.approverRole}`,
         });
         return;
       }
@@ -255,10 +337,15 @@ export class ApprovalController {
       }
 
       // Check role authorization
-      if (instance.currentStep && !req.user!.roles.includes(instance.currentStep.approverRole) && !req.user!.roles.includes('ADMIN')) {
+      const isRoleAuthorized =
+        (instance.currentStep && req.user!.roles.includes(instance.currentStep.approverRole)) ||
+        req.user!.roles.includes('ADMIN') ||
+        (instance.documentType === 'PURCHASE_REQUISITION' && req.user!.roles.includes('FINANCE_APPROVER'));
+
+      if (!isRoleAuthorized) {
         res.status(403).json({
           success: false,
-          message: `Forbidden: This step requires role ${instance.currentStep.approverRole}`,
+          message: `Forbidden: This step requires role ${instance.currentStep?.approverRole}`,
         });
         return;
       }

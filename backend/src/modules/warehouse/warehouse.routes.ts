@@ -11,6 +11,7 @@ router.use(authenticateToken);
 router.get('/tree', WarehouseController.getLocationTree);
 router.get('/', WarehouseController.listWarehouses);
 router.get('/:id/tree', WarehouseController.getWarehouseTree);
+router.get('/:id/bins', WarehouseController.listWarehouseBins);
 
 // Companies
 router.get('/companies', WarehouseController.listCompanies);

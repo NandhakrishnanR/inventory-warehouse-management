@@ -40,10 +40,68 @@ export class ProcurementController {
           department: true,
           requestedBy: { select: { id: true, username: true, email: true } },
           items: { include: { product: true } },
+          purchaseOrders: {
+            select: {
+              id: true,
+              poNumber: true,
+              status: true,
+              totalAmount: true,
+              createdAt: true,
+              orderDate: true,
+              supplier: { select: { id: true, name: true, code: true } },
+              items: {
+                select: {
+                  id: true,
+                  productId: true,
+                  orderedQty: true,
+                  receivedQty: true,
+                },
+              },
+              goodsReceipts: {
+                select: {
+                  id: true,
+                  grnNumber: true,
+                  status: true,
+                  createdAt: true,
+                  warehouse: { select: { id: true, name: true, code: true } },
+                },
+              },
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       });
-      res.json({ success: true, data: requisitions });
+
+      // Enrich with latest approval instance details (active step, approver role, and full action trail)
+      const prIds = requisitions.map((r) => r.id);
+      const instances = await prisma.approvalInstance.findMany({
+        where: {
+          documentType: 'PURCHASE_REQUISITION',
+          documentId: { in: prIds },
+        },
+        include: {
+          currentStep: true,
+          actions: {
+            include: { actor: { select: { id: true, username: true } }, step: true },
+            orderBy: { actionDate: 'desc' },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const instanceMap = new Map<string, any>();
+      instances.forEach((inst) => {
+        if (!instanceMap.has(inst.documentId)) {
+          instanceMap.set(inst.documentId, inst);
+        }
+      });
+
+      const enriched = requisitions.map((pr) => ({
+        ...pr,
+        approvalInstance: instanceMap.get(pr.id) || null,
+      }));
+
+      res.json({ success: true, data: enriched });
     } catch (err) {
       next(err);
     }
@@ -119,14 +177,19 @@ export class ProcurementController {
 
       let updatedPR;
       if (workflow && workflow.steps.length > 0) {
-        const firstStep = workflow.steps[0];
+        // If initiator is already a Department Manager, departmental review is already endorsed by the department head.
+        // Route directly to Finance Budget Authorization (FINANCE_APPROVER) so separation of duties is maintained.
+        const isDeptManager = req.user!.roles?.includes('DEPARTMENT_MANAGER');
+        const financeStep = workflow.steps.find((s) => s.approverRole === 'FINANCE_APPROVER');
+        const assignedStep = (isDeptManager && financeStep) ? financeStep : workflow.steps[0];
+
         // Create approval instance
         const instance = await prisma.approvalInstance.create({
           data: {
             workflowId: workflow.id,
             documentType: 'PURCHASE_REQUISITION',
             documentId: pr.id,
-            currentStepId: firstStep.id,
+            currentStepId: assignedStep.id,
             status: 'PENDING',
             initiatedById: req.user!.id,
           },
@@ -139,7 +202,7 @@ export class ProcurementController {
 
         // Notify approver role
         await notifyUsersByRole(
-          firstStep.approverRole,
+          assignedStep.approverRole,
           `Pending Approval: ${pr.prNumber}`,
           `Purchase requisition ${pr.prNumber} is submitted for your review ($${pr.totalEstimatedCost.toFixed(2)}).`,
           '/approvals',
@@ -176,7 +239,32 @@ export class ProcurementController {
           createdBy: { select: { id: true, username: true } },
           approvedBy: { select: { id: true, username: true } },
           items: { include: { product: true } },
-          goodsReceipts: true,
+          requisition: {
+            select: {
+              id: true,
+              prNumber: true,
+              status: true,
+              totalEstimatedCost: true,
+              requestedBy: { select: { username: true } },
+            },
+          },
+          goodsReceipts: {
+            include: {
+              warehouse: { select: { id: true, name: true, code: true } },
+              receivedBy: { select: { username: true } },
+              items: {
+                include: {
+                  product: { select: { id: true, name: true, sku: true } },
+                  putawayTasks: {
+                    include: {
+                      targetBin: { select: { id: true, code: true, name: true, binType: true } },
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: { createdAt: 'desc' },
+          },
         },
         orderBy: { createdAt: 'desc' },
       });

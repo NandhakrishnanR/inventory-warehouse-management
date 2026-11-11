@@ -20,6 +20,7 @@ import {
   Pencil,
   Trash2,
   AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -232,6 +233,45 @@ export const WarehouseHierarchy: React.FC = () => {
       }))
     );
   }, [allSites]);
+
+  const allBins = useMemo(() => {
+    const list: any[] = [];
+    allWarehouses.forEach((w: any) => {
+      (w.zones || []).forEach((z: any) => {
+        (z.racks || []).forEach((r: any) => {
+          (r.bins || []).forEach((b: any) =>
+            list.push({
+              ...b,
+              warehouseId: w.id,
+              warehouseName: w.name,
+              rackName: r.name,
+              zoneName: z.name,
+            })
+          );
+        });
+      });
+      (w.bins || []).forEach((b: any) =>
+        list.push({
+          ...b,
+          warehouseId: w.id,
+          warehouseName: w.name,
+          rackName: 'Floor',
+          zoneName: 'Floor',
+        })
+      );
+    });
+    return list;
+  }, [allWarehouses]);
+
+  // Dynamic live node data so that when treeData updates in background, selectedNode reflects it immediately
+  const activeNodeData = useMemo(() => {
+    if (!selectedNode) return null;
+    if (selectedNode.type === 'BIN') {
+      const match = allBins.find((b: any) => b.id === selectedNode.data.id);
+      if (match) return match;
+    }
+    return selectedNode.data;
+  }, [selectedNode, allBins]);
 
   const toggleExpand = (id: string) => {
     setExpandedNodes((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -644,10 +684,13 @@ export const WarehouseHierarchy: React.FC = () => {
             <button
               type="button"
               onClick={() => openAddModal('COMPANY')}
-              className="btn-primary text-xs flex items-center space-x-1.5 shadow-md shadow-brand-500/20"
+              className="group relative inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:via-indigo-500 hover:to-blue-600 rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 transition-all duration-200 border border-blue-400/20"
             >
-              <Building className="w-4 h-4" />
-              <span>Add Company</span>
+              <div className="p-1 rounded-lg bg-white/15 backdrop-blur-xs transition-transform group-hover:scale-110">
+                <Building className="w-3.5 h-3.5 text-white" />
+              </div>
+              <span className="tracking-wide">Add Company</span>
+              <Plus className="w-3.5 h-3.5 text-blue-200 group-hover:text-white transition-colors" />
             </button>
           )}
 
@@ -655,12 +698,25 @@ export const WarehouseHierarchy: React.FC = () => {
             <button
               type="button"
               onClick={() => openAddModal('BIN')}
-              className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition border border-slate-200 dark:border-slate-700"
+              className="group relative inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:via-indigo-500 hover:to-blue-600 rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 transition-all duration-200 border border-blue-400/20"
             >
-              <Plus className="w-4 h-4 text-brand-600 dark:text-brand-400" />
+              <div className="p-1 rounded-lg bg-white/15 backdrop-blur-xs transition-transform group-hover:scale-110">
+                <Plus className="w-4 h-4 text-brand-600 dark:text-brand-400 text-white" />
+              </div>
+
               <span>Add Node</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['location-tree'] })}
+            title="Refresh location tree"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition shadow-xs"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
         </div>
       </div>
 
@@ -690,9 +746,9 @@ export const WarehouseHierarchy: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => openAddModal('COMPANY')}
-                  className="btn-primary text-xs inline-flex items-center space-x-1"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:scale-95 transition-all duration-200"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Building className="w-4 h-4" />
                   <span>Create First Company</span>
                 </button>
               )}
@@ -712,11 +768,10 @@ export const WarehouseHierarchy: React.FC = () => {
                     className="border border-slate-200 dark:border-slate-800 rounded-xl p-3 bg-slate-50/70 dark:bg-slate-900/50"
                   >
                     <div
-                      className={`flex items-center justify-between text-sm font-bold text-slate-800 dark:text-slate-200 transition p-2 rounded-xl ${
-                        isSelected
-                          ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60'
-                          : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/60'
-                      }`}
+                      className={`flex items-center justify-between text-sm font-bold text-slate-800 dark:text-slate-200 transition p-2 rounded-xl ${isSelected
+                        ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60'
+                        : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/60'
+                        }`}
                     >
                       <div
                         onClick={() => {
@@ -751,11 +806,10 @@ export const WarehouseHierarchy: React.FC = () => {
                             toggleCompanyFullExpand(company);
                           }}
                           title={isCompanyFullyExpanded ? 'Collapse entire company tree' : 'Expand entire company tree'}
-                          className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold transition flex items-center space-x-1 border ${
-                            isCompanyFullyExpanded
-                              ? 'bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-950 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
-                              : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                          }`}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold transition flex items-center space-x-1 border ${isCompanyFullyExpanded
+                            ? 'bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-950 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+                            : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                            }`}
                         >
                           {isCompanyFullyExpanded ? (
                             <>
@@ -841,11 +895,10 @@ export const WarehouseHierarchy: React.FC = () => {
                             return (
                               <div key={reg.id} className="space-y-2">
                                 <div
-                                  className={`flex items-center justify-between text-xs font-semibold p-1.5 rounded-lg transition ${
-                                    isRegSelected
-                                      ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-900 dark:text-sky-200 border border-sky-200 dark:border-sky-800'
-                                      : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
-                                  }`}
+                                  className={`flex items-center justify-between text-xs font-semibold p-1.5 rounded-lg transition ${isRegSelected
+                                    ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-900 dark:text-sky-200 border border-sky-200 dark:border-sky-800'
+                                    : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
+                                    }`}
                                 >
                                   <div
                                     onClick={() => {
@@ -933,11 +986,10 @@ export const WarehouseHierarchy: React.FC = () => {
                                         return (
                                           <div key={city.id} className="space-y-2">
                                             <div
-                                              className={`flex items-center justify-between text-xs font-medium p-1.5 rounded-lg transition ${
-                                                isCitySelected
-                                                  ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-900 dark:text-teal-200 border border-teal-200 dark:border-teal-800'
-                                                  : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
-                                              }`}
+                                              className={`flex items-center justify-between text-xs font-medium p-1.5 rounded-lg transition ${isCitySelected
+                                                ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-900 dark:text-teal-200 border border-teal-200 dark:border-teal-800'
+                                                : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
+                                                }`}
                                             >
                                               <div
                                                 onClick={() => {
@@ -1028,11 +1080,10 @@ export const WarehouseHierarchy: React.FC = () => {
                                                     return (
                                                       <div key={site.id} className="space-y-2">
                                                         <div
-                                                          className={`flex items-center justify-between text-xs font-semibold p-2 rounded-lg transition ${
-                                                            isSiteSelected
-                                                              ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border border-amber-200 dark:border-amber-800'
-                                                              : 'bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
-                                                          }`}
+                                                          className={`flex items-center justify-between text-xs font-semibold p-2 rounded-lg transition ${isSiteSelected
+                                                            ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border border-amber-200 dark:border-amber-800'
+                                                            : 'bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                                                            }`}
                                                         >
                                                           <div
                                                             onClick={() => {
@@ -1120,11 +1171,10 @@ export const WarehouseHierarchy: React.FC = () => {
                                                                 return (
                                                                   <div
                                                                     key={wh.id}
-                                                                    className={`p-3 bg-white dark:bg-slate-900 border rounded-xl space-y-2 transition ${
-                                                                      isWhSelected
-                                                                        ? 'border-emerald-500 shadow-sm'
-                                                                        : 'border-slate-200 dark:border-slate-800'
-                                                                    }`}
+                                                                    className={`p-3 bg-white dark:bg-slate-900 border rounded-xl space-y-2 transition ${isWhSelected
+                                                                      ? 'border-emerald-500 shadow-sm'
+                                                                      : 'border-slate-200 dark:border-slate-800'
+                                                                      }`}
                                                                   >
                                                                     <div
                                                                       onClick={() => {
@@ -1213,11 +1263,10 @@ export const WarehouseHierarchy: React.FC = () => {
                                                                           return (
                                                                             <div key={zone.id} className="space-y-1.5">
                                                                               <div
-                                                                                className={`flex items-center justify-between p-1 rounded-lg transition ${
-                                                                                  isZoneSelected
-                                                                                    ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 border border-amber-200 dark:border-amber-800'
-                                                                                    : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                                                                                }`}
+                                                                                className={`flex items-center justify-between p-1 rounded-lg transition ${isZoneSelected
+                                                                                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 border border-amber-200 dark:border-amber-800'
+                                                                                  : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                                                                                  }`}
                                                                               >
                                                                                 <div
                                                                                   onClick={() =>
@@ -1284,11 +1333,10 @@ export const WarehouseHierarchy: React.FC = () => {
                                                                                   return (
                                                                                     <div key={rack.id} className="space-y-1">
                                                                                       <div
-                                                                                        className={`flex items-center justify-between p-1 rounded transition ${
-                                                                                          isRackSelected
-                                                                                            ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-900 border border-sky-200 dark:border-sky-800'
-                                                                                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                                                                                        }`}
+                                                                                        className={`flex items-center justify-between p-1 rounded transition ${isRackSelected
+                                                                                          ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-900 border border-sky-200 dark:border-sky-800'
+                                                                                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                                                                                          }`}
                                                                                       >
                                                                                         <div
                                                                                           onClick={() =>
@@ -1329,7 +1377,7 @@ export const WarehouseHierarchy: React.FC = () => {
                                                                                                 onClick={() => openEditModal('RACK', rack)}
                                                                                                 title="Edit Rack"
                                                                                                 className="p-1 rounded text-slate-400 hover:text-sky-600 transition"
-                                                                                            >
+                                                                                              >
                                                                                                 <Pencil className="w-2.5 h-2.5" />
                                                                                               </button>
                                                                                               <button
@@ -1361,13 +1409,12 @@ export const WarehouseHierarchy: React.FC = () => {
                                                                                                 })
                                                                                               }
                                                                                               title={`${bin.name} (${bin.code}) - Click to inspect`}
-                                                                                              className={`px-2 py-1 rounded text-[10px] font-mono transition flex items-center space-x-1 ${
-                                                                                                isBinSelected
-                                                                                                  ? 'bg-brand-600 text-white font-bold ring-2 ring-brand-400'
-                                                                                                  : bin.stockBalances?.some((b: any) => b.onHandQty > 0)
+                                                                                              className={`px-2 py-1 rounded text-[10px] font-mono transition flex items-center space-x-1 ${isBinSelected
+                                                                                                ? 'bg-brand-600 text-white font-bold ring-2 ring-brand-400'
+                                                                                                : bin.stockBalances?.some((b: any) => b.onHandQty > 0)
                                                                                                   ? 'bg-emerald-50 dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/50 hover:bg-emerald-100'
                                                                                                   : 'bg-slate-100 dark:bg-slate-800/60 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200'
-                                                                                              }`}
+                                                                                                }`}
                                                                                             >
                                                                                               <Archive className="w-2.5 h-2.5" />
                                                                                               <span>{bin.code}</span>
@@ -1404,11 +1451,12 @@ export const WarehouseHierarchy: React.FC = () => {
                                                                                       })
                                                                                     }
                                                                                     title={`${bin.name} (${bin.code}) - Click to inspect`}
-                                                                                    className={`px-2 py-1 rounded text-[10px] font-mono transition flex items-center space-x-1 ${
-                                                                                      isBinSelected
-                                                                                        ? 'bg-brand-600 text-white font-bold ring-2 ring-brand-400'
+                                                                                    className={`px-2 py-1 rounded text-[10px] font-mono transition flex items-center space-x-1 ${isBinSelected
+                                                                                      ? 'bg-brand-600 text-white font-bold ring-2 ring-brand-400'
+                                                                                      : bin.stockBalances?.some((b: any) => b.onHandQty > 0)
+                                                                                        ? 'bg-emerald-50 dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/50 hover:bg-emerald-100'
                                                                                         : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200'
-                                                                                    }`}
+                                                                                      }`}
                                                                                   >
                                                                                     <Archive className="w-2.5 h-2.5" />
                                                                                     <span>{bin.code}</span>
@@ -1517,11 +1565,10 @@ export const WarehouseHierarchy: React.FC = () => {
 
                     {selectedNode.data.isActive !== undefined && (
                       <span
-                        className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                          selectedNode.data.isActive
-                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
-                            : 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-400 border border-rose-200 dark:border-rose-800'
-                        }`}
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${selectedNode.data.isActive
+                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+                          : 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-400 border border-rose-200 dark:border-rose-800'
+                          }`}
                       >
                         {selectedNode.data.isActive ? 'Active' : 'Inactive'}
                       </span>
@@ -1732,12 +1779,13 @@ export const WarehouseHierarchy: React.FC = () => {
                 {/* Stored Inventory Breakdown (if Bin) */}
                 {selectedNode.type === 'BIN' && (
                   <div className="mt-4">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
-                      Current Physical Inventory
+                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 flex items-center justify-between">
+                      <span>Current Physical Inventory</span>
+                      <span className="text-[10px] font-normal text-slate-400 font-mono">Live Synced</span>
                     </h3>
-                    {selectedNode.data.stockBalances && selectedNode.data.stockBalances.length > 0 ? (
+                    {(activeNodeData?.stockBalances || selectedNode.data.stockBalances)?.length > 0 ? (
                       <div className="space-y-2 max-h-56 overflow-y-auto">
-                        {selectedNode.data.stockBalances.map((b: any) => (
+                        {(activeNodeData?.stockBalances || selectedNode.data.stockBalances).map((b: any) => (
                           <div
                             key={b.id}
                             className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs flex justify-between items-center"
@@ -1745,11 +1793,11 @@ export const WarehouseHierarchy: React.FC = () => {
                             <div>
                               <div className="font-semibold text-slate-800 dark:text-white">{b.product.name}</div>
                               <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                                {b.product.sku}
+                                {b.product.sku} {b.batchNumber ? `· Batch: ${b.batchNumber}` : ''}
                               </div>
                             </div>
                             <div className="text-right">
-                              <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                              <span className={`text-sm font-bold ${b.onHandQty > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
                                 {b.onHandQty}
                               </span>
                               <span className="text-[10px] text-slate-400 block">on-hand</span>
@@ -2327,16 +2375,16 @@ export const WarehouseHierarchy: React.FC = () => {
               {(editModalNode.type === 'COMPANY' ||
                 editModalNode.type === 'SITE' ||
                 editModalNode.type === 'WAREHOUSE') && (
-                <div>
-                  <label className="text-slate-600 dark:text-slate-400 block mb-1 font-medium">Address</label>
-                  <textarea
-                    rows={2}
-                    value={editFormData.address}
-                    onChange={(e) => setEditFormData((p) => ({ ...p, address: e.target.value }))}
-                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-900 dark:text-white"
-                  />
-                </div>
-              )}
+                  <div>
+                    <label className="text-slate-600 dark:text-slate-400 block mb-1 font-medium">Address</label>
+                    <textarea
+                      rows={2}
+                      value={editFormData.address}
+                      onChange={(e) => setEditFormData((p) => ({ ...p, address: e.target.value }))}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                )}
 
               {editModalNode.type === 'SITE' && (
                 <div>

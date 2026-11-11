@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../shared/prisma';
 import { logAudit } from '../../shared/audit';
+import { createNotification } from '../../shared/notification';
 
 const createGRNSchema = z.object({
   purchaseOrderId: z.string().uuid().optional(),
@@ -34,6 +35,7 @@ export class ReceivingController {
     try {
       const receipts = await prisma.goodsReceipt.findMany({
         include: {
+          purchaseOrder: true,
           supplier: true,
           warehouse: true,
           receivedBy: { select: { id: true, username: true } },
@@ -74,10 +76,22 @@ export class ReceivingController {
 
         // 2. Create Receipt Items and Putaway tasks
         for (const item of data.items) {
+          // Resolve poItemId if purchaseOrderId is linked and poItemId was not directly supplied
+          let resolvedPoItemId = item.poItemId;
+          if (!resolvedPoItemId && data.purchaseOrderId) {
+            const poItem = await tx.purchaseOrderItem.findFirst({
+              where: {
+                purchaseOrderId: data.purchaseOrderId,
+                productId: item.productId,
+              },
+            });
+            if (poItem) resolvedPoItemId = poItem.id;
+          }
+
           const grnItem = await tx.goodsReceiptItem.create({
             data: {
               goodsReceiptId: grn.id,
-              poItemId: item.poItemId || null,
+              poItemId: resolvedPoItemId || null,
               productId: item.productId,
               deliveredQty: item.deliveredQty,
               acceptedQty: item.acceptedQty,
@@ -89,9 +103,9 @@ export class ReceivingController {
           });
 
           // Update PO received quantity if PO item linked
-          if (item.poItemId) {
+          if (resolvedPoItemId) {
             await tx.purchaseOrderItem.update({
-              where: { id: item.poItemId },
+              where: { id: resolvedPoItemId },
               data: {
                 receivedQty: { increment: item.acceptedQty },
               },
@@ -109,6 +123,14 @@ export class ReceivingController {
               if (defaultBin) targetBinId = defaultBin.id;
             }
 
+            // Fallback to any active bin in the system if receiving warehouse has no bin configured yet
+            if (!targetBinId) {
+              const anyBin = await tx.warehouseBin.findFirst({
+                where: { isActive: true },
+              });
+              if (anyBin) targetBinId = anyBin.id;
+            }
+
             if (targetBinId) {
               await tx.putawayTask.create({
                 data: {
@@ -124,31 +146,71 @@ export class ReceivingController {
           }
         }
 
-        // Check if purchase order is completed
+        // Check if purchase order is completed and update status
+        let linkedRequisition: any = null;
         if (data.purchaseOrderId) {
           const poItems = await tx.purchaseOrderItem.findMany({
             where: { purchaseOrderId: data.purchaseOrderId },
           });
           const allReceived = poItems.every((poi) => poi.receivedQty >= poi.orderedQty);
-          await tx.purchaseOrder.update({
+          const anyReceived = poItems.some((poi) => poi.receivedQty > 0);
+          const poStatus = allReceived ? 'RECEIVED' : anyReceived ? 'PARTIALLY_RECEIVED' : 'APPROVED';
+
+          const updatedPo = await tx.purchaseOrder.update({
             where: { id: data.purchaseOrderId },
-            data: { status: allReceived ? 'RECEIVED' : 'PARTIALLY_RECEIVED' },
+            data: { status: poStatus },
           });
+
+          // Check and update linked Purchase Requisition
+          if (updatedPo.requisitionId) {
+            const linkedPos = await tx.purchaseOrder.findMany({
+              where: { requisitionId: updatedPo.requisitionId },
+            });
+            const allPosReceived = linkedPos.length > 0 && linkedPos.every((po) => po.status === 'RECEIVED');
+            const anyPosReceived = linkedPos.some((po) => po.status === 'RECEIVED' || po.status === 'PARTIALLY_RECEIVED');
+
+            const prStatus = allPosReceived ? 'FULFILLED' : anyPosReceived ? 'PARTIALLY_FULFILLED' : 'ORDERED';
+            linkedRequisition = await tx.purchaseRequisition.update({
+              where: { id: updatedPo.requisitionId },
+              data: { status: prStatus },
+            });
+          }
         }
 
-        return grn;
+        return { grn, linkedRequisition };
       });
 
       await logAudit({
         actorId: req.user!.id,
         action: 'CREATE',
         entity: 'GoodsReceipt',
-        entityId: result.id,
-        reference: result.grnNumber,
-        afterValue: result,
+        entityId: result.grn.id,
+        reference: result.grn.grnNumber,
+        afterValue: result.grn,
       });
 
-      res.status(201).json({ success: true, data: result });
+      if (result.linkedRequisition) {
+        await logAudit({
+          actorId: req.user!.id,
+          action: result.linkedRequisition.status === 'FULFILLED' ? 'FULFILL' : 'PARTIAL_RECEIPT',
+          entity: 'PurchaseRequisition',
+          entityId: result.linkedRequisition.id,
+          reference: result.linkedRequisition.prNumber,
+          afterValue: { status: result.linkedRequisition.status },
+        });
+
+        if (result.linkedRequisition.requestedById) {
+          await createNotification({
+            userId: result.linkedRequisition.requestedById,
+            title: `Requisition ${result.linkedRequisition.status === 'FULFILLED' ? 'Fulfilled' : 'Updated'}: ${result.linkedRequisition.prNumber}`,
+            message: `Shipment received at warehouse for requisition ${result.linkedRequisition.prNumber} (GRN ${result.grn.grnNumber}).`,
+            type: 'SUCCESS',
+            link: '/procurement',
+          });
+        }
+      }
+
+      res.status(201).json({ success: true, data: result.grn });
     } catch (err) {
       next(err);
     }
@@ -276,14 +338,31 @@ export class ReceivingController {
           },
         });
 
+        let fullyPutawayPo: any = null;
         if (remainingTasks === 0) {
           await tx.goodsReceipt.update({
             where: { id: task.goodsReceiptItem.goodsReceiptId },
             data: { status: 'COMPLETED' },
           });
+
+          const poId = task.goodsReceiptItem.goodsReceipt.purchaseOrderId;
+          if (poId) {
+            const incompleteGrns = await tx.goodsReceipt.count({
+              where: {
+                purchaseOrderId: poId,
+                status: { not: 'COMPLETED' },
+              },
+            });
+            if (incompleteGrns === 0) {
+              fullyPutawayPo = await tx.purchaseOrder.findUnique({
+                where: { id: poId },
+                include: { requisition: true },
+              });
+            }
+          }
         }
 
-        return { task: updatedTask, movement, balance };
+        return { task: updatedTask, movement, balance, fullyPutawayPo };
       });
 
       await logAudit({
@@ -299,6 +378,16 @@ export class ReceivingController {
           warehouseId: bin.warehouseId,
         },
       });
+
+      if (result.fullyPutawayPo?.requisition?.requestedById) {
+        await createNotification({
+          userId: result.fullyPutawayPo.requisition.requestedById,
+          title: `Stock Stored in Warehouse: ${result.fullyPutawayPo.requisition.prNumber}`,
+          message: `Putaway completed for order ${result.fullyPutawayPo.poNumber}. Items are safely placed in warehouse bins and available for use.`,
+          type: 'SUCCESS',
+          link: '/procurement',
+        });
+      }
 
       res.json({
         success: true,
