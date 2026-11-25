@@ -15,8 +15,6 @@ import {
   Filter,
   Lock,
   Layers,
-  ChevronRight,
-  Info,
 } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -33,14 +31,14 @@ export const UsersManagement: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
-  const isAdmin = currentUser?.roles?.includes('ADMIN');
+  const isAdmin = hasRole('ADMIN');
 
   // Queries
-  const { data: users = [], isLoading: loadingUsers, refetch: refetchUsers } = useQuery<UserRecord[]>({
+  const { data: users = [], isLoading: loadingUsers, isError: isUsersError, refetch: refetchUsers } = useQuery<UserRecord[]>({
     queryKey: ['users'],
     queryFn: async () => {
       const res = await api.get('/auth/users');
-      return res.data.data;
+      return res.data.data || [];
     },
   });
 
@@ -48,7 +46,7 @@ export const UsersManagement: React.FC = () => {
     queryKey: ['roles'],
     queryFn: async () => {
       const res = await api.get('/auth/roles');
-      return res.data.data;
+      return res.data.data || [];
     },
   });
 
@@ -56,18 +54,18 @@ export const UsersManagement: React.FC = () => {
     queryKey: ['permissions'],
     queryFn: async () => {
       const res = await api.get('/auth/permissions');
-      return res.data.data;
+      return res.data.data || [];
     },
   });
 
   // Mutations
   const toggleStatusMutation = useMutation({
     mutationFn: async (userId: string) => {
-      const res = await api.patch(`/auth/users/${userId}/toggle-status`);
+      const res = await api.put(`/auth/users/${userId}/toggle-status`);
       return res.data;
     },
-    onSuccess: () => {
-      setActionSuccess('User status updated successfully.');
+    onSuccess: (data: any) => {
+      setActionSuccess(data?.message || 'User status updated successfully.');
       queryClient.invalidateQueries({ queryKey: ['users'] });
       setTimeout(() => setActionSuccess(null), 4000);
     },
@@ -79,14 +77,15 @@ export const UsersManagement: React.FC = () => {
 
   const assignRoleMutation = useMutation({
     mutationFn: async ({ userId, roleId }: { userId: string; roleId: string }) => {
-      const res = await api.post('/auth/users/assign-role', { userId, roleId });
+      const res = await api.post(`/auth/users/${userId}/assign-role`, { roleId });
       return res.data;
     },
-    onSuccess: () => {
-      setActionSuccess('Role assigned successfully.');
+    onSuccess: (data: any) => {
+      setActionSuccess(data?.message || 'Role assigned successfully.');
       setSelectedUserForRole(null);
       setSelectedRoleId('');
       queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['roles'] });
       setTimeout(() => setActionSuccess(null), 4000);
     },
     onError: (err: any) => {
@@ -97,12 +96,13 @@ export const UsersManagement: React.FC = () => {
 
   const removeRoleMutation = useMutation({
     mutationFn: async ({ userId, roleId }: { userId: string; roleId: string }) => {
-      const res = await api.post('/auth/users/remove-role', { userId, roleId });
+      const res = await api.delete(`/auth/users/${userId}/roles/${roleId}`);
       return res.data;
     },
-    onSuccess: () => {
-      setActionSuccess('Role removed successfully.');
+    onSuccess: (data: any) => {
+      setActionSuccess(data?.message || 'Role removed successfully.');
       queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['roles'] });
       setTimeout(() => setActionSuccess(null), 4000);
     },
     onError: (err: any) => {
@@ -112,16 +112,20 @@ export const UsersManagement: React.FC = () => {
   });
 
   // Filtered users
-  const filteredUsers = users.filter((u) => {
+  const filteredUsers = (users || []).filter((u) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      u.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (u.employee?.name && u.employee.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (u.employee?.department && u.employee.department.toLowerCase().includes(searchQuery.toLowerCase()));
+      (u.username || '').toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q) ||
+      (u.name && u.name.toLowerCase().includes(q)) ||
+      (u.department && u.department.toLowerCase().includes(q)) ||
+      (u.designation && u.designation.toLowerCase().includes(q));
 
     if (roleFilter === 'ALL') return matchesSearch;
-    return matchesSearch && u.userRoles.some((ur) => ur.role.name === roleFilter);
+    return matchesSearch && (u.roles || []).includes(roleFilter);
   });
+
+  const permissionModules = Array.from(new Set((permissions || []).map((p) => p.module)));
 
   const getRoleBadgeClass = (roleName: string) => {
     switch (roleName) {
@@ -183,6 +187,13 @@ export const UsersManagement: React.FC = () => {
         </div>
       )}
 
+      {isUsersError && (
+        <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-xs flex items-center space-x-2">
+          <XCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+          <span>Failed to load user directory from server. Click Refresh Directory to retry.</span>
+        </div>
+      )}
+
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="glass-card p-5 rounded-2xl">
@@ -202,7 +213,7 @@ export const UsersManagement: React.FC = () => {
             <span className="text-xs font-medium uppercase tracking-wider">System Roles</span>
             <Shield className="w-4 h-4 text-purple-600 dark:text-purple-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-900 dark:text-white">{roles.length || 8}</div>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">{roles.length}</div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
             Full RBAC separation of duties
           </div>
@@ -213,9 +224,9 @@ export const UsersManagement: React.FC = () => {
             <span className="text-xs font-medium uppercase tracking-wider">Granular Permissions</span>
             <Key className="w-4 h-4 text-amber-600 dark:text-amber-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-900 dark:text-white">{permissions.length || 25}</div>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">{permissions.length}</div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-            Across 7 functional modules
+            Across {permissionModules.length} functional modules
           </div>
         </div>
 
@@ -296,8 +307,8 @@ export const UsersManagement: React.FC = () => {
               >
                 <option value="ALL">All Roles ({roles.length})</option>
                 {roles.map((r) => (
-                  <option key={r.id} value={r.name}>
-                    {r.name}
+                  <option key={r.id} value={r.code}>
+                    {r.name} ({r.code})
                   </option>
                 ))}
               </select>
@@ -330,127 +341,142 @@ export const UsersManagement: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
-                      {/* Name / Info */}
-                      <td className="py-3.5 px-4">
-                        <div className="font-semibold text-slate-900 dark:text-white">
-                          {u.employee?.name || u.username}
-                        </div>
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center space-x-2">
-                          <span>@{u.username}</span>
-                          <span>•</span>
-                          <span>{u.email}</span>
-                          {u.employee?.department && (
-                            <>
-                              <span>•</span>
-                              <span className="font-medium text-brand-600 dark:text-brand-400">
-                                {u.employee.department}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </td>
+                  filteredUsers.map((u) => {
+                    const userRoles = u.roles || [];
+                    const userWarehouses = u.warehouses || [];
+                    const isSelf = u.id === currentUser?.id;
 
-                      {/* Roles */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex flex-wrap gap-1.5 items-center">
-                          {u.userRoles.map((ur) => (
-                            <span
-                              key={ur.role.id}
-                              className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border ${getRoleBadgeClass(
-                                ur.role.name
-                              )}`}
-                            >
-                              <span>{ur.role.name}</span>
-                              {isAdmin && u.userRoles.length > 1 && (
-                                <button
-                                  onClick={() =>
-                                    removeRoleMutation.mutate({ userId: u.id, roleId: ur.role.id })
-                                  }
-                                  title={`Remove ${ur.role.name}`}
-                                  className="ml-1 text-slate-400 hover:text-rose-600 transition"
-                                >
-                                  ×
-                                </button>
-                              )}
-                            </span>
-                          ))}
-                          {isAdmin && (
-                            <button
-                              onClick={() => setSelectedUserForRole(u)}
-                              className="px-2 py-0.5 rounded-md border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 hover:text-brand-600 hover:border-brand-500 transition text-[10px] flex items-center space-x-1"
-                              title="Assign another role"
-                            >
-                              <Plus className="w-2.5 h-2.5" />
-                              <span>Role</span>
-                            </button>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Warehouse Access */}
-                      <td className="py-3.5 px-4">
-                        {u.userWarehouses && u.userWarehouses.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {u.userWarehouses.map((uw, idx) => (
-                              <span
-                                key={idx}
-                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
-                              >
-                                <Building className="w-2.5 h-2.5 text-slate-400" />
-                                <span>{uw.warehouse.name}</span>
-                              </span>
-                            ))}
+                    return (
+                      <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
+                        {/* Name / Info */}
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-slate-900 dark:text-white">
+                            {u.name || u.username}
                           </div>
-                        ) : (
-                          <span className="text-[11px] text-slate-400 italic">Enterprise Global (All Sites)</span>
-                        )}
-                      </td>
-
-                      {/* Status */}
-                      <td className="py-3.5 px-4 text-center">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                            u.isActive
-                              ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                              : 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
-                          }`}
-                        >
-                          {u.isActive ? 'Active' : 'Suspended'}
-                        </span>
-                      </td>
-
-                      {/* Actions */}
-                      <td className="py-3.5 px-4 text-right">
-                        {isAdmin ? (
-                          <button
-                            onClick={() => toggleStatusMutation.mutate(u.id)}
-                            disabled={toggleStatusMutation.isPending}
-                            className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition inline-flex items-center space-x-1.5 ${
-                              u.isActive
-                                ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800'
-                                : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900 border border-emerald-200 dark:border-emerald-800'
-                            }`}
-                          >
-                            {u.isActive ? (
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-x-2">
+                            <span>@{u.username}</span>
+                            <span>•</span>
+                            <span>{u.email}</span>
+                            {u.department && (
                               <>
-                                <UserX className="w-3 h-3" />
-                                <span>Suspend</span>
-                              </>
-                            ) : (
-                              <>
-                                <UserCheck className="w-3 h-3" />
-                                <span>Reactivate</span>
+                                <span>•</span>
+                                <span className="font-medium text-brand-600 dark:text-brand-400">
+                                  {u.department}
+                                </span>
                               </>
                             )}
-                          </button>
-                        ) : (
-                          <span className="text-slate-400 text-[11px] italic">Admin Only</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                          </div>
+                        </td>
+
+                        {/* Roles */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap gap-1.5 items-center">
+                            {userRoles.map((roleCode) => {
+                              const roleObj = roles.find((r) => r.code === roleCode);
+                              return (
+                                <span
+                                  key={roleCode}
+                                  title={roleObj?.description || roleCode}
+                                  className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border ${getRoleBadgeClass(
+                                    roleCode
+                                  )}`}
+                                >
+                                  <span>{roleCode}</span>
+                                  {isAdmin && userRoles.length > 1 && roleObj && (
+                                    <button
+                                      onClick={() =>
+                                        removeRoleMutation.mutate({ userId: u.id, roleId: roleObj.id })
+                                      }
+                                      title={`Remove ${roleCode}`}
+                                      className="ml-1 text-slate-400 hover:text-rose-600 transition"
+                                    >
+                                      ×
+                                    </button>
+                                  )}
+                                </span>
+                              );
+                            })}
+                            {isAdmin && (
+                              <button
+                                onClick={() => {
+                                  setSelectedRoleId('');
+                                  setSelectedUserForRole(u);
+                                }}
+                                className="px-2 py-0.5 rounded-md border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 hover:text-brand-600 hover:border-brand-500 transition text-[10px] flex items-center space-x-1"
+                                title="Assign another role"
+                              >
+                                <Plus className="w-2.5 h-2.5" />
+                                <span>Role</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Warehouse Access */}
+                        <td className="py-3.5 px-4">
+                          {userWarehouses.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {userWarehouses.map((uw, idx) => (
+                                <span
+                                  key={uw.id || idx}
+                                  title={`${uw.code} (${uw.accessLevel})`}
+                                  className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                                >
+                                  <Building className="w-2.5 h-2.5 text-slate-400" />
+                                  <span>{uw.name || uw.code}</span>
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">Enterprise Global (All Sites)</span>
+                          )}
+                        </td>
+
+                        {/* Status */}
+                        <td className="py-3.5 px-4 text-center">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              u.isActive
+                                ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                : 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                            }`}
+                          >
+                            {u.isActive ? 'Active' : 'Suspended'}
+                          </span>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3.5 px-4 text-right">
+                          {isAdmin ? (
+                            <button
+                              onClick={() => toggleStatusMutation.mutate(u.id)}
+                              disabled={toggleStatusMutation.isPending || isSelf}
+                              title={isSelf ? 'Cannot suspend your active admin session' : undefined}
+                              className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition inline-flex items-center space-x-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
+                                u.isActive
+                                  ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800'
+                                  : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900 border border-emerald-200 dark:border-emerald-800'
+                              }`}
+                            >
+                              {u.isActive ? (
+                                <>
+                                  <UserX className="w-3 h-3" />
+                                  <span>Suspend</span>
+                                </>
+                              ) : (
+                                <>
+                                  <UserCheck className="w-3 h-3" />
+                                  <span>Reactivate</span>
+                                </>
+                              )}
+                            </button>
+                          ) : (
+                            <span className="text-slate-400 text-[11px] italic">Admin Only</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -476,47 +502,56 @@ export const UsersManagement: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50/70 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold">
-                <tr>
-                  <th className="py-3 px-4 min-w-[200px]">Permission Code / Description</th>
-                  {roles.map((r) => (
-                    <th key={r.id} className="py-3 px-2 text-center min-w-[100px] text-[11px]">
-                      <div className="font-bold text-slate-800 dark:text-slate-200">{r.name}</div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800/80">
-                {permissions.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
-                    <td className="py-2.5 px-4">
-                      <div className="font-mono font-semibold text-brand-600 dark:text-brand-400">{p.code}</div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{p.description}</div>
-                    </td>
-                    {roles.map((r) => {
-                      const hasPerm =
-                        r.name === 'ADMIN' ||
-                        r.rolePermissions?.some((rp) => rp.permission?.code === p.code || rp.permission?.id === p.id);
-
-                      return (
-                        <td key={r.id} className="py-2.5 px-2 text-center">
-                          {hasPerm ? (
-                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
-                              ✓
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-slate-300 dark:text-slate-700">
-                              -
-                            </span>
-                          )}
-                        </td>
-                      );
-                    })}
+            {loadingRoles || loadingPermissions ? (
+              <div className="py-12 text-center text-xs text-slate-400">Loading role-permission matrix...</div>
+            ) : (
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50/70 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold">
+                  <tr>
+                    <th className="py-3 px-4 min-w-[220px]">Permission Code / Description</th>
+                    {roles.map((r) => (
+                      <th key={r.id} className="py-3 px-2 text-center min-w-[110px] text-[11px]">
+                        <div className="font-bold text-slate-800 dark:text-slate-200">{r.code}</div>
+                        <div className="text-[10px] font-normal text-slate-400 truncate max-w-[120px] mx-auto">
+                          {r.name}
+                        </div>
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800/80">
+                  {permissions.map((p) => (
+                    <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
+                      <td className="py-2.5 px-4">
+                        <div className="font-mono font-semibold text-brand-600 dark:text-brand-400">{p.code}</div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {p.description || p.name}
+                        </div>
+                      </td>
+                      {roles.map((r) => {
+                        const hasPerm =
+                          r.code === 'ADMIN' ||
+                          (r.permissions || []).some((rp) => rp.code === p.code || rp.id === p.id);
+
+                        return (
+                          <td key={r.id} className="py-2.5 px-2 text-center">
+                            {hasPerm ? (
+                              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
+                                ✓
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-slate-300 dark:text-slate-700">
+                                -
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
@@ -524,8 +559,16 @@ export const UsersManagement: React.FC = () => {
       {/* Tab 3: Permissions Catalog */}
       {activeTab === 'permissions' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {['inventory', 'transfer', 'procurement', 'receiving', 'stock_count', 'warehouse', 'reports', 'audit', 'users'].map(
-            (module) => {
+          {loadingPermissions ? (
+            <div className="col-span-full py-12 text-center text-xs text-slate-400">
+              Loading permissions catalog...
+            </div>
+          ) : permissionModules.length === 0 ? (
+            <div className="col-span-full py-12 text-center text-xs text-slate-400">
+              No permissions configured.
+            </div>
+          ) : (
+            permissionModules.map((module) => {
               const modulePerms = permissions.filter((p) => p.module === module);
               if (modulePerms.length === 0) return null;
 
@@ -534,7 +577,7 @@ export const UsersManagement: React.FC = () => {
                   <div>
                     <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-3">
                       <span className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
-                        {module.replace('_', ' ')}
+                        {module.replace(/_/g, ' ')}
                       </span>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 border border-brand-200 dark:border-brand-800">
                         {modulePerms.length} rules
@@ -550,6 +593,11 @@ export const UsersManagement: React.FC = () => {
                           <div className="font-mono text-xs font-semibold text-brand-600 dark:text-brand-400">
                             {p.code}
                           </div>
+                          {p.name && (
+                            <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300 mt-0.5">
+                              {p.name}
+                            </div>
+                          )}
                           <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                             {p.description}
                           </div>
@@ -559,7 +607,7 @@ export const UsersManagement: React.FC = () => {
                   </div>
                 </div>
               );
-            }
+            })
           )}
         </div>
       )}
@@ -571,7 +619,7 @@ export const UsersManagement: React.FC = () => {
             <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-3">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2">
                 <Shield className="w-4 h-4 text-brand-600 dark:text-brand-400" />
-                <span>Assign Role to {selectedUserForRole.employee?.name || selectedUserForRole.username}</span>
+                <span>Assign Role to {selectedUserForRole.name || selectedUserForRole.username}</span>
               </h3>
               <button
                 onClick={() => setSelectedUserForRole(null)}
@@ -594,10 +642,10 @@ export const UsersManagement: React.FC = () => {
               >
                 <option value="">Select a role...</option>
                 {roles
-                  .filter((r) => !selectedUserForRole.userRoles.some((ur) => ur.role.id === r.id))
+                  .filter((r) => !(selectedUserForRole.roles || []).includes(r.code))
                   .map((r) => (
                     <option key={r.id} value={r.id}>
-                      {r.name} - {r.description}
+                      {r.name} ({r.code}) - {r.description}
                     </option>
                   ))}
               </select>

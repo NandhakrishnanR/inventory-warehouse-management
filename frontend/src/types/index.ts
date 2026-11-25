@@ -23,17 +23,23 @@ export interface UserProfile {
 export interface PermissionRecord {
   id: string;
   code: string;
+  name?: string;
   module: string;
-  description: string;
+  action?: string;
+  description: string | null;
 }
 
 export interface RoleRecord {
   id: string;
+  code: string;
   name: string;
   description: string | null;
-  isSystem: boolean;
-  rolePermissions: Array<{
-    permission: PermissionRecord;
+  userCount?: number;
+  permissions: Array<{
+    id: string;
+    code: string;
+    name?: string;
+    module: string;
   }>;
 }
 
@@ -41,28 +47,18 @@ export interface UserRecord {
   id: string;
   username: string;
   email: string;
+  name?: string;
+  designation?: string;
+  department?: string;
   isActive: boolean;
   createdAt: string;
-  employee?: {
+  roles: string[];
+  permissions?: string[];
+  warehouses?: Array<{
+    id: string;
     code: string;
     name: string;
-    department?: string;
-    designation?: string;
-  } | null;
-  userRoles: Array<{
-    role: {
-      id: string;
-      name: string;
-      description?: string;
-    };
-  }>;
-  userWarehouses?: Array<{
     accessLevel: string;
-    warehouse: {
-      id: string;
-      code: string;
-      name: string;
-    };
   }>;
 }
 

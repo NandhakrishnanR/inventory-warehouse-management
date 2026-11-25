@@ -36,7 +36,7 @@ export const Sidebar: React.FC = () => {
     { label: 'Procurement & PO', path: '/procurement', icon: ShoppingCart },
     { label: 'Receiving & Putaway', path: '/receiving', icon: Truck },
     { label: 'Stock Transfers', path: '/transfers', icon: ArrowLeftRight },
-    { label: 'Counts & Variance', path: '/stock-counts', icon: ClipboardCheck },
+    // { label: 'Counts & Variance', path: '/stock-counts', icon: ClipboardCheck },
     { label: 'Approval Inbox', path: '/approvals', icon: Inbox },
     { label: 'Reports & Analytics', path: '/reports', icon: BarChart3 },
     { label: 'Audit Trail', path: '/audit', icon: History },
