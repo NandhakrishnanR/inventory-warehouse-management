@@ -433,7 +433,6 @@ async function main() {
     },
   });
 
-
   const binB01_001 = await prisma.warehouseBin.create({
     data: {
       warehouseId: whAmbattur.id,
